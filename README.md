@@ -3,6 +3,7 @@
 A C++ library for importing Krita's KRA & KRZ formatted documents.
 
 ### Supported operating systems:
+
 - Mac OS X
 - Linux
 - Windows
@@ -63,6 +64,7 @@ Following instructions are applicable to the `libkra_cl` command line executable
 ***NOTE**: In cases where this library is to be used as an external dependency in an independent project, the `libkra_cl`-folder can be fully ignored.*
 
 Evidently, as a first pre-requisite step, this repository needs to be cloned and the submodules need to be initialized using the following Git commands:
+
 ```
 git clone https://github.com/2shady4u/libkra.git
 cd libkra
