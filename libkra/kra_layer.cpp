@@ -32,6 +32,9 @@ namespace kra
         case GROUP_LAYER:
             _import_group_attributes(p_name, p_file, p_xml_element);
             break;
+        case VECTOR_LAYER:
+            _import_vector_attributes(p_name, p_file, p_xml_element);
+            break;
         }
     }
 
@@ -64,6 +67,8 @@ namespace kra
             exported_layer->pixel_size = layer_data->pixel_size;
 
             exported_layer->data = layer_data->get_composed_data(color_space);
+
+            exported_layer->default_pixel = layer_data->get_composed_default_pixel(color_space);
             break;
         }
         case GROUP_LAYER:
@@ -71,6 +76,10 @@ namespace kra
             {
                 exported_layer->child_uuids.push_back(child->uuid);
             }
+            break;
+        case VECTOR_LAYER:
+            /* Hand the raw SVG document to the application, which is free to rasterize it however it likes */
+            exported_layer->svg_content = svg_content;
             break;
         }
 
@@ -100,6 +109,9 @@ namespace kra
         case GROUP_LAYER:
             _print_group_layer_attributes();
             break;
+        case VECTOR_LAYER:
+            _print_vector_layer_attributes();
+            break;
         }
     }
 
@@ -126,6 +138,23 @@ namespace kra
             /* Start extracting the tile data. */
             layer_data = std::make_unique<LayerData>();
             layer_data->import_attributes(layer_content);
+
+            /* A layer only stores tiles for the region it actually painted. Every pixel outside of that region */
+            /* has the layer's default pixel colour, which is stored in a separate entry next to the tile data. */
+            /* The entry is optional: layers that are fully transparent outside their tiles simply omit it. */
+            const std::string &default_pixel_path = layer_path + ".defaultpixel";
+            std::vector<unsigned char> default_pixel_content;
+            if (unzLocateFile(p_file, default_pixel_path.c_str(), 1) == UNZ_OK &&
+                extract_current_file_to_vector(p_file, default_pixel_content) == UNZ_OK &&
+                default_pixel_content.size() == layer_data->pixel_size)
+            {
+                layer_data->default_pixel.assign(default_pixel_content.begin(),
+                                                 default_pixel_content.begin() + layer_data->pixel_size);
+            }
+            else
+            {
+                layer_data->default_pixel.assign(layer_data->pixel_size, 0);
+            }
         }
         else
         {
@@ -147,17 +176,10 @@ namespace kra
             /* Check the type of the layer and proceed from there... */
             std::string node_type = layer_node->Attribute("nodetype");
             std::unique_ptr<Layer> layer = std::make_unique<Layer>();
-            if (node_type == "paintlayer" || node_type == "grouplayer")
-            {
-                if (node_type == "paintlayer")
-                {
-                    layer->type = PAINT_LAYER;
-                }
-                else
-                {
-                    layer->type = GROUP_LAYER;
-                }
 
+            /* Try to determine the layer type from the node type string */
+            if (layer_type_from_string(node_type, &layer->type))
+            {
                 layer->import_attributes(p_name, p_file, layer_node);
 
                 if (verbosity_level >= VERBOSE)
@@ -188,6 +210,15 @@ namespace kra
     {
         fprintf(stdout, "   -- Additional attributes specific to this layer's type (= PAINT_LAYER):\n");
         fprintf(stdout, "   >> color_space = %i\n", color_space);
+        if (layer_data)
+        {
+            fprintf(stdout, "   >> default_pixel =");
+            for (uint8_t channel : layer_data->get_composed_default_pixel(color_space))
+            {
+                fprintf(stdout, " %i", channel);
+            }
+            fprintf(stdout, "\n");
+        }
         // TODO: Also print attributes of the layer_data!
     }
 
@@ -201,6 +232,35 @@ namespace kra
         for (const auto &layer : children)
         {
             fprintf(stdout, "      - '%s' (%s)\n", layer->name.c_str(), layer->uuid.c_str());
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------------------------------------
+    // Extract attributes specific to this layer's type (= VECTOR_LAYER) and load the SVG content
+    // ---------------------------------------------------------------------------------------------------------------------
+    void Layer::_import_vector_attributes(const std::string &p_name, unzFile &p_file, const tinyxml2::XMLElement *p_xml_element)
+    {
+        /* Vector layers are stored in a directory named <filename>.shapelayer/content.svg */
+        const std::string &svg_path = p_name + "/layers/" + filename + ".shapelayer/content.svg";
+        const char *c_path = svg_path.c_str();
+        int errorCode = unzLocateFile(p_file, c_path, 1);
+        errorCode += extract_current_file_to_vector(p_file, svg_content);
+        if (errorCode != UNZ_OK)
+        {
+            fprintf(stdout, "ERROR: Vector layer SVG content with path '%s' could not be found in KRA archive.\n", svg_path.c_str());
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------------------------------------
+    // Print additional attributes specific to this layer's type (= VECTOR_LAYER) to the output console
+    // ---------------------------------------------------------------------------------------------------------------------
+    void Layer::_print_vector_layer_attributes() const
+    {
+        fprintf(stdout, "   -- Additional attributes specific to this layer's type (= VECTOR_LAYER):\n");
+        fprintf(stdout, "   >> svg_content size = %zu bytes\n", svg_content.size());
+        if (!svg_content.empty())
+        {
+            fprintf(stdout, "   >> SVG data loaded successfully\n");
         }
     }
 };
